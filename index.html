@@ -249,10 +249,18 @@ function sampleParam(fn, m){
   return out;
 }
 function polar(fn){ return sampleParam(function(t){ var r=fn(t); return [Math.cos(t)*r, Math.sin(t)*r]; }); }
+// Polar form of |x|^n + |y|^n = 1. The textbook parametric form, x = sign(cos t)
+// |cos t|^(2/n), has an infinite derivative at t = 0, 90, 180, 270 degrees, so a
+// uniform sweep of t leaves one ~24px chord at each of those four points while
+// every other segment is half a pixel. Stroked wide and semi-transparent, that
+// lone long segment is where a renderer paints a visible blob - which is exactly
+// where the dark discs showed up. The polar radius below is smooth everywhere,
+// so the sampling stays even all the way round. Same curve, same shape.
 function superE(n, ax, ay){
   return sampleParam(function(t){
-    var c=Math.cos(t), s=Math.sin(t), p=2/n;
-    return [ax*(c<0?-1:1)*Math.pow(Math.abs(c),p), ay*(s<0?-1:1)*Math.pow(Math.abs(s),p)];
+    var c = Math.abs(Math.cos(t)), s = Math.abs(Math.sin(t));
+    var r = Math.pow(Math.pow(c, n) + Math.pow(s, n), -1/n);
+    return [ax*r*Math.cos(t), ay*r*Math.sin(t)];
   });
 }
 function normalize(pts){
