@@ -601,16 +601,23 @@ function ensureEscape(pRad){
   }
   if(!fwdObj || !backObj) return;                 // at least one way out already
 
-  // free the side that is easier to open, preferring a blinker over a runner
-  var pick, pickIsRun;
-  if(fwdIsRun !== backIsRun){ pickIsRun = false; pick = fwdIsRun ? backObj : fwdObj; }
-  else { pickIsRun = fwdIsRun; pick = (fwdD > backD) ? fwdObj : backObj; }
+  function turnAway(r){
+    var away = dS(r.p, S.s) > 0 ? -1 : 1;   // send it back the way it came
+    if(r.d !== away) r.d = away;
+  }
 
-  if(!pickIsRun){ pick.held = true; pick.solid = false; pick.warn = 1; }
-  else {
-    // send the patrolling block back the way it came, away from Bloop
-    var away = dS(pick.p, S.s) > 0 ? -1 : 1;
-    if(pick.d !== away){ pick.d = away; }
+  if(fwdIsRun && backIsRun){
+    // squeezed between two patrols: turn both around, or the far one keeps closing
+    turnAway(fwdObj); turnAway(backObj);
+  } else if(fwdIsRun !== backIsRun){
+    // one of each: standing the blinker down is the cleaner opening
+    var blink = fwdIsRun ? backObj : fwdObj;
+    blink.held = true; blink.solid = false; blink.warn = 1;
+    turnAway(fwdIsRun ? fwdObj : backObj);
+  } else {
+    // two blinkers: open the one further away, so there is room to run into
+    var pick = (fwdD > backD) ? fwdObj : backObj;
+    pick.held = true; pick.solid = false; pick.warn = 1;
   }
 }
 
@@ -1043,13 +1050,14 @@ function drawBlock(p, ang, sc, solid, warn, kind, dirArrow){
         ctx.closePath(); ctx.fill();
       }
     }
-  } else {
-    ctx.strokeStyle = warn ? 'rgba(255,180,59,'+(0.55+Math.sin(performance.now()/60)*0.35)+')' : 'rgba(255,59,92,0.30)';
-    ctx.lineWidth = warn ? 3 : 2;
-    ctx.setLineDash(warn ? [] : [5,5]);
-    roundRect(ctx, 0,0, len, wid, Math.min(9*sc, wid/2)); ctx.stroke();
-    ctx.setLineDash([]);
+  } else if(warn){
+    // About to turn solid: a filled bar fading up on the spot. Deliberately not
+    // an outline - a hollow ring reads as a floating circle sitting on the track.
+    var a = 0.34 + Math.sin(performance.now()/70)*0.20;
+    ctx.fillStyle = 'rgba(255,150,60,' + a + ')';
+    roundRect(ctx, 0,0, len, wid, Math.min(9*sc, wid/2)); ctx.fill();
   }
+  // Safe: draw nothing. The track stays clean and only real danger is on it.
   ctx.restore();
 }
 
