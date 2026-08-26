@@ -1019,7 +1019,10 @@ function drawBlock(p, ang, sc, solid, warn, kind, dirArrow){
   ctx.save();
   ctx.translate(p[0], p[1]); ctx.rotate(ang);
   var len = (kind==='run' ? 34 : 30) * sc;
-  var wid = TRACK_W * 0.96;
+  // Keep blocks the same proportion on every screen. The track width is capped
+  // at 38px, so tying the block's width to it alone made them square - and a
+  // rounded square reads as a circle - on phones, while laptops got long bars.
+  var wid = Math.min(TRACK_W * 0.96, len / 1.55);
   if(solid){
     ctx.shadowColor = COL.bad; ctx.shadowBlur = 20*sc;
     var g = ctx.createLinearGradient(0,-wid/2,0,wid/2);
