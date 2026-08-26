@@ -376,14 +376,14 @@ function levelFromDots(d){
   return 51 + Math.floor((d-140)/4);                  // L51+
 }
 function speedFor(L){
-  if(L <= 5)  return 168;
-  if(L <= 10) return 168 + (L-5)*11;                  // 223 @ L10
-  return Math.min(575, 223 + 34*Math.sqrt(L-10));     // 328@20 372@30 434@50 540@100
+  if(L <= 5)  return 160;
+  if(L <= 10) return 160 + (L-5)*10;                  // 210 @ L10
+  return Math.min(545, 210 + 31*Math.sqrt(L-10));     // 308@20 347@30 406@50 507@100
 }
 function nBlink(L){ return L < 11 ? 0 : Math.min(5, 1 + Math.floor((L-11)/5)); }
 function nRun(L){   return L < 21 ? 0 : Math.min(2, 1 + Math.floor((L-21)/12)); }
 function nSweep(L){ return L < 76 ? 0 : Math.min(2, 1 + Math.floor((L-76)/14)); }
-function puChance(L){ return L < 51 ? 0 : 0.20; }
+function puChance(L){ return L < 51 ? 0 : 0.24; }
 
 // ------------------------------ state ------------------------------
 var S = {};
@@ -397,7 +397,7 @@ function resetRun(){
   S = {
     s: 0.25, dir: 1, speed: speedFor(1),
     score: 0, dots: 0, level: 1, combo: 0, comboT: 0,
-    t: 0, grace: 1.0,
+    t: 0, grace: 1.2,
     flipT: 99, squash: 0,
     trail: [], parts: [], pops: [],
     dotList: [], blinks: [], runs: [], sweeps: [],
@@ -435,13 +435,13 @@ function layoutHazards(L, hard){
         blinks.push({
           s: base, age: 0,
           period: per,
-          solidFrac: Math.min(0.55, 0.32 + L*0.0030),
+          solidFrac: Math.min(0.50, 0.30 + L*0.0028),
           phase: per * ((blinks.length + 0.5) / Math.max(1, nb)) + Math.random()*per*0.12,
           solid: false, held: false, warn: 0,
           width: 1 + Math.min(0.32, Math.max(0,(L-31))*0.009)
         });
       } else {
-        var sp = (0.30 + Math.min(0.45, (L-21)*0.012));   // as a fraction of player speed
+        var sp = (0.28 + Math.min(0.40, (L-21)*0.011));   // as a fraction of player speed
         runs.push({
           c: base, span: span, p: base, d: Math.random()<0.5?1:-1,
           v: sp, age: 0
@@ -470,31 +470,148 @@ function layoutHazards(L, hard){
   S.blinks = blinks; S.runs = runs; S.sweeps = sweeps;
 }
 
-function hazardBlocked(s, pad){
-  pad = pad || 0.035;
-  var i;
-  for(i=0;i<S.blinks.length;i++) if(aS(s, S.blinks[i].s) < pad) return true;
-  for(i=0;i<S.runs.length;i++)   if(aS(s, S.runs[i].c) < S.runs[i].span + pad*0.6) return true;
-  for(i=0;i<S.dotList.length;i++) if(aS(s, S.dotList[i].s) < 0.045) return true;
+// How much clear track a dot needs, in pixels, converted to loop fraction:
+// the obstacle's half-length, the dot's radius, and a margin so they never touch.
+function clearS(){ return (36*(R/150)) / perim; }
+
+function hazardNear(s){
+  var c = clearS(), i;
+  for(i=0;i<S.blinks.length;i++) if(aS(s, S.blinks[i].s) < c) return true;
+  // a runner can be anywhere in its patrol, so clear the whole stretch
+  for(i=0;i<S.runs.length;i++)   if(aS(s, S.runs[i].c) < S.runs[i].span + c) return true;
   return false;
 }
-function spawnDot(){
-  var s = 0, tries = 0, bestS = Math.random(), bestGap = -1;
-  for(tries = 0; tries < 14; tries++){
+
+// Two dots must never sit on top of each other. The middle of the widest empty
+// stretch of track is always a safe place, so it is the last-resort fallback.
+function widestGapPoint(){
+  var pts = [S.s - Math.floor(S.s)], i;
+  for(i=0;i<S.dotList.length;i++){ var v = S.dotList[i].s; pts.push(v - Math.floor(v)); }
+  for(i=0;i<S.blinks.length;i++){ var w = S.blinks[i].s; pts.push(w - Math.floor(w)); }
+  for(i=0;i<S.runs.length;i++){
+    var r = S.runs[i];
+    pts.push((r.c - r.span) - Math.floor(r.c - r.span));
+    pts.push((r.c + r.span) - Math.floor(r.c + r.span));
+  }
+  pts.sort(function(a,b){ return a-b; });
+  var bestMid = 0.5, bestGap = -1;
+  for(i=0;i<pts.length;i++){
+    var a = pts[i], b = (i+1 < pts.length) ? pts[i+1] : pts[0] + 1;
+    var g = b - a;
+    if(g > bestGap){ bestGap = g; bestMid = a + g/2; }
+  }
+  return bestMid - Math.floor(bestMid);
+}
+
+var MIN_DOT_GAP = 0.055;   // ~70px of track on a phone; a pair of dots needs ~20px
+
+function dotGap(s){
+  var g = 1;
+  for(var i=0;i<S.dotList.length;i++) g = Math.min(g, aS(s, S.dotList[i].s));
+  return g;
+}
+
+function pickDotSpot(){
+  var best = null, bestGap = -1, fallback = null, fallbackGap = -1, t, s, g;
+
+  // Pass 1: clear of every dot AND every hazard. Almost always succeeds.
+  for(t=0; t<40; t++){
     s = Math.random();
-    if(hazardBlocked(s) || aS(s, S.s) < 0.06) continue;
-    var gap = 1;
-    for(var g=0; g<S.dotList.length; g++) gap = Math.min(gap, aS(s, S.dotList[g].s));
-    if(gap > bestGap){ bestGap = gap; bestS = s; }
+    if(aS(s, S.s) < 0.05) continue;
+    g = dotGap(s);
+    if(g < MIN_DOT_GAP) continue;
+    if(hazardNear(s)){
+      if(g > fallbackGap){ fallbackGap = g; fallback = s; }   // remember in case pass 1 fails
+      continue;
+    }
+    if(g > bestGap){ bestGap = g; best = s; }
     if(bestGap > 0.18) break;
   }
-  s = bestS;
+
+  // Pass 2: a very crowded arena may leave nowhere clear of red - take the spot
+  // furthest from other dots. Pass 3: the widest empty stretch of track.
+  if(best === null) best = (fallback !== null) ? fallback : widestGapPoint();
+  return best;
+}
+
+function spawnDot(){
   var kind = null;
   if(!S.hadSpecial && Math.random() < puChance(S.level)){
     kind = PU_KEYS[Math.floor(Math.random()*PU_KEYS.length)];
     S.hadSpecial = true;
   }
-  S.dotList.push({ s:s, kind:kind, t:Math.random()*6, born:0 });
+  S.dotList.push({ s:pickDotSpot(), kind:kind, t:Math.random()*6, born:0 });
+}
+
+// Levelling up re-lays every hazard, which can drop a red block straight on top
+// of a dot that is already on the track. Move those dots rather than stranding
+// them under an obstacle.
+function relocateBlockedDots(){
+  for(var i=0;i<S.dotList.length;i++){
+    var d = S.dotList[i];
+    if(hazardNear(d.s)){
+      S.dotList.splice(i,1);          // hide it from the picker so it doesn't avoid itself
+      d.s = pickDotSpot();
+      d.born = 0;
+      S.dotList.splice(i,0,d);
+    }
+  }
+}
+
+// Nudge apart any pair that has drifted together (the magnet drags them along
+// the track, and a shrinking arena packs them closer).
+function separateDots(){
+  var minSep = (30*(R/150)) / perim, i, j;
+  for(i=0;i<S.dotList.length;i++){
+    for(j=i+1;j<S.dotList.length;j++){
+      var a = S.dotList[i], b = S.dotList[j];
+      var diff = dS(a.s, b.s), ad = Math.abs(diff);
+      if(ad < minSep){
+        var push = (minSep - ad) * 0.5 + 1e-6;
+        var dir = diff >= 0 ? 1 : -1;
+        b.s += dir * push; a.s -= dir * push;
+        a.s -= Math.floor(a.s); b.s -= Math.floor(b.s);
+      }
+    }
+  }
+}
+
+// Bloop must always have somewhere to run. If solid obstacles close in from
+// both sides at once, stand the nearer blinker down, or turn a patrolling block
+// around, so a way out opens instead of a guaranteed death.
+function ensureEscape(pRad){
+  var win = 0.11, i;
+  var fwdD = 9, backD = 9, fwdObj = null, backObj = null, fwdIsRun = false, backIsRun = false;
+
+  function consider(d, obj, isRun){
+    if(d > 0){ if(d < fwdD){ fwdD = d; fwdObj = obj; fwdIsRun = isRun; } }
+    else      { if(-d < backD){ backD = -d; backObj = obj; backIsRun = isRun; } }
+  }
+  for(i=0;i<S.blinks.length;i++){
+    var b = S.blinks[i];
+    if(!b.solid) continue;
+    var d = dS(S.s, b.s);
+    if(Math.abs(d) < win) consider(d*S.dir, b, false);
+  }
+  for(i=0;i<S.runs.length;i++){
+    var r = S.runs[i];
+    if(r.age <= 0.6) continue;
+    var dr = dS(S.s, r.p);
+    if(Math.abs(dr) < win) consider(dr*S.dir, r, true);
+  }
+  if(!fwdObj || !backObj) return;                 // at least one way out already
+
+  // free the side that is easier to open, preferring a blinker over a runner
+  var pick, pickIsRun;
+  if(fwdIsRun !== backIsRun){ pickIsRun = false; pick = fwdIsRun ? backObj : fwdObj; }
+  else { pickIsRun = fwdIsRun; pick = (fwdD > backD) ? fwdObj : backObj; }
+
+  if(!pickIsRun){ pick.held = true; pick.solid = false; pick.warn = 1; }
+  else {
+    // send the patrolling block back the way it came, away from Bloop
+    var away = dS(pick.p, S.s) > 0 ? -1 : 1;
+    if(pick.d !== away){ pick.d = away; }
+  }
 }
 
 // ------------------------------ audio ------------------------------
@@ -637,6 +754,7 @@ function setLevel(L){
   }
   arenaRotSpeed = L >= 76 ? (0.07 + Math.min(0.18, (L-76)*0.0022)) * (Math.floor(L/7)%2 ? 1 : -1) : 0;
   layoutHazards(L, false);
+  relocateBlockedDots();
   sfxLevel();
   if(BANNERS[L]) banner(BANNERS[L]);
   else if(L % 10 === 0) banner('LEVEL ' + L);
@@ -731,8 +849,9 @@ function update(dt){
     }
   }
   while(S.dotList.length < 4) spawnDot();
+  separateDots();
 
-  // --- blinkers
+  // --- blinkers: advance the cycle first, decide collisions after the escape check
   var j, hit = false;
   for(j=0;j<S.blinks.length;j++){
     var b = S.blinks[j]; b.age += dt;
@@ -744,9 +863,8 @@ function update(dt){
     if(wantSolid && !b.solid && nearPlayer && !isGhost){ b.held = true; }
     if(!nearPlayer) b.held = false;
     if(isFrozen) { wantSolid = wantSolid && b.solid; }
-    b.solid = wantSolid && !b.held && b.age > 0.55;
-    b.warn = (!b.solid && ph > solidStart - 0.45/b.period && ph < solidStart) ? 1 : (b.held ? 1 : 0);
-    if(b.solid && !isGhost && S.grace <= 0 && aS(S.s, b.s)*perim < (pRad*0.82 + 17*(R/150)*b.width)) hit = true;
+    b.solid = wantSolid && !b.held && b.age > 0.6;
+    b.warn = (!b.solid && ph > solidStart - 0.6/b.period && ph < solidStart) ? 1 : (b.held ? 1 : 0);
   }
 
   // --- runners
@@ -758,19 +876,33 @@ function update(dt){
       else if(dS(r.c, r.p) < -r.span){ r.p = r.c - r.span; r.d = 1; }
       r.p -= Math.floor(r.p);
     }
-    if(!isGhost && S.grace <= 0 && r.age > 0.55 && aS(S.s, r.p)*perim < (pRad*0.82 + 19*(R/150))) hit = true;
   }
 
   // --- sweepers
   for(j=0;j<S.sweeps.length;j++){
     var w = S.sweeps[j]; w.age += dt;
     if(!isFrozen) w.a += w.v*dt;
-    if(!isGhost && S.grace <= 0 && w.age > 0.7){
-      var dx = pp[0]-CX, dy = pp[1]-CY;
-      var ca = Math.cos(w.a), sa = Math.sin(w.a);
-      var proj = dx*ca + dy*sa;
-      var perp = Math.abs(-dx*sa + dy*ca);
-      if(proj > 0 && perp < (10 + pRad*0.7)) hit = true;
+  }
+
+  if(!isGhost) ensureEscape(pRad);
+
+  // --- collisions, once the track is guaranteed to have a way out
+  if(!isGhost && S.grace <= 0){
+    for(j=0;j<S.blinks.length;j++){
+      var bb = S.blinks[j];
+      if(bb.solid && aS(S.s, bb.s)*perim < (pRad*0.82 + 17*(R/150)*bb.width)) hit = true;
+    }
+    for(j=0;j<S.runs.length;j++){
+      var rr = S.runs[j];
+      if(rr.age > 0.6 && aS(S.s, rr.p)*perim < (pRad*0.82 + 19*(R/150))) hit = true;
+    }
+    for(j=0;j<S.sweeps.length;j++){
+      var ww = S.sweeps[j];
+      if(ww.age > 0.7){
+        var dx = pp[0]-CX, dy = pp[1]-CY;
+        var ca = Math.cos(ww.a), sa = Math.sin(ww.a);
+        if(dx*ca + dy*sa > 0 && Math.abs(-dx*sa + dy*ca) < (10 + pRad*0.7)) hit = true;
+      }
     }
   }
 
