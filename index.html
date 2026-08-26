@@ -942,6 +942,23 @@ function die(){
 }
 
 // ------------------------------ render ------------------------------
+// iOS Safari renders canvas shadowBlur unreliably - it can paint the halo black
+// instead of the shape's colour, which is what put dark rings on the track. Draw
+// every glow as an explicit radial gradient instead: identical in every browser,
+// and cheaper than a real shadow.
+var _rgb = {};
+function glowAt(x, y, rad, hex, strength){
+  var c = _rgb[hex];
+  if(!c){ var n = parseInt(hex.slice(1), 16); c = _rgb[hex] = [(n>>16)&255, (n>>8)&255, n&255]; }
+  var head = 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',';
+  var g = ctx.createRadialGradient(x, y, 0, x, y, rad);
+  g.addColorStop(0,    head + (0.50*strength) + ')');
+  g.addColorStop(0.42, head + (0.20*strength) + ')');
+  g.addColorStop(1,    head + '0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, rad, 0, 6.2832); ctx.fill();
+}
+
 function roundRect(c,x,y,w,h,r){
   c.beginPath();
   c.moveTo(x-w/2+r, y-h/2);
@@ -993,10 +1010,9 @@ function drawDots(){
       ctx.save();
       ctx.translate(p[0], p[1]);
       ctx.rotate(Math.sin(d.t*2.2)*0.18);
-      ctx.shadowColor = c; ctx.shadowBlur = 24*sc;
+      glowAt(0, 0, 30*sc, c, 1);
       ctx.fillStyle = c;
       ctx.beginPath(); ctx.arc(0,0,13*sc,0,6.2832); ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.fillStyle = 'rgba(255,255,255,0.92)';
       ctx.beginPath(); ctx.arc(0,0,10*sc,0,6.2832); ctx.fill();
       ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -1011,10 +1027,9 @@ function drawDots(){
       ctx.restore();
     } else {
       ctx.save();
-      ctx.shadowColor = COL.dot; ctx.shadowBlur = 18*sc;
+      glowAt(p[0], p[1], 22*sc, COL.dot, 1);
       ctx.fillStyle = COL.dot;
       ctx.beginPath(); ctx.arc(p[0],p[1], 8.5*sc, 0, 6.2832); ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.fillStyle = '#ffffff';
       ctx.beginPath(); ctx.arc(p[0]-1.4*sc, p[1]-1.6*sc, 3.4*sc, 0, 6.2832); ctx.fill();
       ctx.restore();
@@ -1031,12 +1046,11 @@ function drawBlock(p, ang, sc, solid, warn, kind, dirArrow){
   // rounded square reads as a circle - on phones, while laptops got long bars.
   var wid = Math.min(TRACK_W * 0.96, len / 1.55);
   if(solid){
-    ctx.shadowColor = COL.bad; ctx.shadowBlur = 20*sc;
+    glowAt(0, 0, len*1.05, COL.bad, 1);
     var g = ctx.createLinearGradient(0,-wid/2,0,wid/2);
     g.addColorStop(0,'#ff6b83'); g.addColorStop(1,'#e01238');
     ctx.fillStyle = g;
     roundRect(ctx, 0,0, len, wid, Math.min(9*sc, wid/2)); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
     roundRect(ctx, 0,-wid*0.22, len*0.82, wid*0.28, 4*sc); ctx.fill();
     if(dirArrow){
@@ -1091,9 +1105,12 @@ function drawHazards(){
     g.addColorStop(0,'rgba(255,59,92,0.05)');
     g.addColorStop(0.35,'rgba(255,59,92,0.55)');
     g.addColorStop(1,'rgba(255,59,92,0.85)');
-    ctx.strokeStyle = g; ctx.lineCap='round';
+    ctx.lineCap='round';
+    ctx.strokeStyle = 'rgba(255,59,92,0.18)';
+    ctx.lineWidth = (w.age > 0.7 ? 9 : 3) + 14;
+    ctx.beginPath(); ctx.moveTo(CX,CY); ctx.lineTo(ex,ey); ctx.stroke();
+    ctx.strokeStyle = g;
     ctx.lineWidth = w.age > 0.7 ? 9 : 3;
-    ctx.shadowColor = COL.bad; ctx.shadowBlur = 16;
     ctx.beginPath(); ctx.moveTo(CX,CY); ctx.lineTo(ex,ey); ctx.stroke();
     ctx.restore();
   }
@@ -1124,14 +1141,13 @@ function drawBloop(alive){
   ctx.save();
   ctx.rotate(ang);
   ctx.scale(sx, sy);
-  ctx.shadowColor = ghost ? '#e8e8ff' : COL.bloop; ctx.shadowBlur = 22*sc;
+  glowAt(0, 0, rr*2.1, ghost ? '#e8e8ff' : COL.bloop, 1);
   var g = ctx.createRadialGradient(-rr*0.32,-rr*0.38,rr*0.12,0,0,rr*1.3);
   g.addColorStop(0, ghost ? '#ffffff' : '#e2ffc4');
   g.addColorStop(0.55, ghost ? '#ddddff' : COL.bloop);
   g.addColorStop(1, ghost ? '#a8a8f0' : COL.bloopDark);
   ctx.fillStyle = g;
   ctx.beginPath(); ctx.arc(0,0,rr,0,6.2832); ctx.fill();
-  ctx.shadowBlur = 0;
   ctx.strokeStyle = ghost ? 'rgba(255,255,255,0.9)' : 'rgba(28,70,10,0.55)';
   ctx.lineWidth = 2*sc;
   ctx.beginPath(); ctx.arc(0,0,rr-1*sc,0,6.2832); ctx.stroke();
@@ -1180,11 +1196,12 @@ function drawFx(){
     var o = S.pops[i];
     ctx.globalAlpha = Math.max(0, Math.min(1, o.life));
     ctx.font = '700 ' + (16*(R/150)) + 'px Fredoka, system-ui, sans-serif';
-    ctx.fillStyle = o.c;
-    ctx.shadowColor='rgba(0,0,0,0.55)'; ctx.shadowBlur=8;
     var edge = 44*(R/150);
-    ctx.fillText(o.txt, Math.max(edge, Math.min(W - edge, o.x)), o.y);
-    ctx.shadowBlur=0;
+    var px = Math.max(edge, Math.min(W - edge, o.x));
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillText(o.txt, px + 1.5, o.y + 1.5);
+    ctx.fillStyle = o.c;
+    ctx.fillText(o.txt, px, o.y);
   }
   ctx.globalAlpha = 1;
 
